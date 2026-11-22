@@ -1,0 +1,173 @@
+---
+title: "Reproducibility check: Maglio & Polman (2014), Study 1"
+author: "Eimon Amjadi"
+date: today
+format:
+  html:
+    toc: true
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## Article
+
+- Citation and DOI: Maglio, S. J., & Polman, E. (2014). Spatial orientation shrinks and expands psychological distance. *Psychological Science, 25*(7), 1345–1352. https://doi.org/10.1177/0956797614530571
+- Data/materials repository URL: course-provided folder, [`psych251/problem_sets/ps3/Group A/Choice 2`](https://github.com/psych251/problem_sets/tree/main/ps3/Group%20A/Choice%202) (article PDF, six `.xlsx` data files, `reproducibilityReport.Rmd`)
+- Part A (known case) or Part B (a classmate's project paper): **Part A**
+- Part B only: the classmate's project repo, and which target outcome is its key effect: n/a
+
+## Target outcomes
+
+Taken from the course's `reproducibilityReport.Rmd`, which quotes the Study 1 results section. Part A uses the course's target outcomes, so this table was filled in before the data was opened.
+
+| \# | Target outcome (quoted) | Paper value(s) |
+|------------------------|------------------------|------------------------|
+| 1 | "no main effect of orientation" | F \< 1 |
+| 2 | "a main effect of station" | F(3, 194) = 24.10, p \< .001, ηp² = .27 |
+| 3 | "the predicted interaction between orientation and station" | F(3, 194) = 16.28, p \< .001, ηp² = .20 |
+| 4 | "the station one stop to the west (St. George …)" | p \< .001, ηp² = .28 |
+| 5 | "the station two stops to the west (Spadina …)" | p = .001, ηp² = .20 |
+| 6 | "the station one stop to the east (Bloor-Yonge …)" | p = .053, ηp² = .08 |
+| 7 | "the station two stops to the east (Sherbourne …)" | p \< .001, ηp² = .24 |
+
+## Materials inventory
+
+| Item | Available? | Notes |
+|------------------------|------------------------|------------------------|
+| Raw data | Yes | `S1_Subway.xlsx`: 202 rows × 4 columns (`DIRECTION`, `DISTANCE`, `STN_NUMBER`, `STN_NAME`), one row per participant. Files for Studies 2–5 are also in the folder. |
+| Processed data | Partly | The raw file is already tidy and needs no exclusions, but it has **no orientation (toward/away) variable**. The factor named in the paper has to be derived. |
+| Codebook / variable descriptions | No | Variable meanings inferred from column names and the paper |
+| Analysis code | No |  |
+| Preregistration | No | The paper says per-cell minimum sample sizes were fixed in advance, but no preregistration is linked |
+
+## Reproduction
+
+The agent's work, under my direction. The full agent report (rendered from the course's `reproducibilityReport.Rmd`) is in [`agent_report/`](agent_report/reproducibilityReport.Rmd). The code below is the same analysis.
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(readxl)
+library(car)        # Type III sums of squares
+library(effectsize) # partial eta squared
+library(knitr)
+options(contrasts = c("contr.sum", "contr.poly"))  # needed for meaningful Type III tests
+```
+
+```{r}
+#| label: load
+d_raw <- read_excel("data/S1_Subway.xlsx")
+glimpse(d_raw)
+```
+
+```{r}
+#| label: preprocess
+# The paper's factor is "orientation (toward vs. away from the rated station)".
+# The data only has travel direction, so orientation = f(direction, station):
+# westbound -> toward Spadina/St. George, away from Bloor-Yonge/Sherbourne; eastbound -> reverse.
+d <- d_raw |>
+  mutate(
+    station   = factor(STN_NAME, levels = c("SPAD", "STG", "B-Y", "SHER"),
+                       labels = c("Spadina", "St. George", "Bloor-Yonge", "Sherbourne")),
+    direction = factor(DIRECTION, levels = c("WEST", "EAST")),
+    orientation = factor(
+      ifelse((DIRECTION == "WEST" & STN_NUMBER %in% 1:2) |
+             (DIRECTION == "EAST" & STN_NUMBER %in% 3:4), "toward", "away"),
+      levels = c("toward", "away"))
+  )
+
+nrow(d)                         # paper: 202
+table(d$direction)              # paper: 101 / 101
+table(d$direction, d$station)   # unbalanced: Bloor-Yonge n = 49
+
+d |>
+  group_by(station, direction) |>
+  summarise(n = n(), mean = mean(DISTANCE), se = sd(DISTANCE) / sqrt(n), .groups = "drop") |>
+  kable(digits = 2, caption = "Cell means (cf. Figure 1)")
+```
+
+```{r}
+#| label: analysis
+# (a) As described in the paper: orientation (toward/away) x station
+m_orient <- lm(DISTANCE ~ orientation * station, data = d)
+a_orient <- Anova(m_orient, type = 3)
+a_orient
+eta_squared(a_orient, partial = TRUE)
+
+# (b) Travel direction (east/west) x station
+m_dir <- lm(DISTANCE ~ direction * station, data = d)
+a_dir <- Anova(m_dir, type = 3)
+a_dir
+eta_squared(a_dir, partial = TRUE)
+
+# Station F depends on SS type with unbalanced cells:
+Anova(m_dir, type = 2)["station", ]
+
+# Per-station east vs. west tests (separate one-way ANOVAs)
+per_station <- map_dfr(c("St. George", "Spadina", "Bloor-Yonge", "Sherbourne"), function(stn) {
+  ds <- filter(d, station == stn)
+  s  <- summary(aov(DISTANCE ~ direction, data = ds))[[1]]
+  tibble(station = stn,
+         M_west = mean(ds$DISTANCE[ds$direction == "WEST"]),
+         M_east = mean(ds$DISTANCE[ds$direction == "EAST"]),
+         F = s$`F value`[1], df = paste(s$Df, collapse = ", "),
+         p = s$`Pr(>F)`[1],
+         eta2p = s$`Sum Sq`[1] / sum(s$`Sum Sq`))
+})
+kable(per_station, digits = 4)
+```
+
+**Agent's summary of values** (from the output above):
+
+| \# | Paper value | As described (orientation × station) | Direction × station |
+|------------------|------------------|------------------|------------------|
+| 1 | F \< 1 | F(1,194) = 46.00, ηp² = .19 | F(1,194) = 0.32 |
+| 2 | F = 24.10, ηp² = .27 | F = 24.10, ηp² = .27 | F = 24.10, ηp² = .27 (Type II: 23.35) |
+| 3 | F = 16.28, ηp² = .20 | F = 0.93, p = .43, ηp² = .01 | F = 16.28, ηp² = .20 |
+| 4 | St. George p \< .001, ηp² = .28 |  | F(1,49) = 18.79, p = .0001, ηp² = .277 |
+| 5 | Spadina p = .001, ηp² = .20 |  | F(1,49) = 11.97, p = .0011, ηp² = .196 |
+| 6 | Bloor-Yonge p = .053, ηp² = .08 |  | F(1,47) = 3.95, p = .0528, ηp² = .077 |
+| 7 | Sherbourne p \< .001, ηp² = .24 |  | F(1,49) = 15.11, p = .0003, ηp² = .236 |
+
+## Checker's verdict
+
+Filled in by you, not the agent.
+
+| \# | Paper value | Reproduced value | Verdict (exact / minor / major / not reproducible) | Reason for discrepancy |
+|---------------|---------------|---------------|---------------|---------------|
+| 1 | F \< 1 | F(1,194) = 46.00, ηp² = .19 | Major | The main effect and interaction flip. The papers description doesnt match what was computed. with toward/away coding, orientation has a *large* main effect (F = 46.00) instead of F \< 1. If you code the factor as east/west travel direction, you get F = 0.32, which matches the paper. So the authors appear to have analyzed direction, not orientation. |
+| 2 | F(3, 194) = 24.10, ηp² = .27 | F = 24.10, ηp² = .27 | Exact | matches as the paper describes. |
+| 3 | F(3, 194) = 16.28, ηp² = .20 | F = 0.93, p = .43, ηp² = .01 | Major | with toward/away coding, the interaction *disappears* (F = 0.93, p = .43). With east/west coding it's F = 16.28, ηp² = .20, an exact match. Same cause as row 1. |
+| 4 | p \< .001, ηp² = .28 | p = .0001, ηp² = .277 | Exact | matches as the paper describes ( they do round) |
+| 5 | p = .001, ηp² = .20 | p = .0011, ηp² = .196 | Exact | matches as the paper describes ( they do round) |
+| 6 | p = .053, ηp² = .08 | p = .0528, ηp² = .077 | Exact | matches as the paper describes ( they do round) |
+| 7 | p \< .001, ηp² = .24 | p = .0003, ηp² = .236 | Exact | matches as the paper describes ( they do round) |
+
+Agent's own claim about success, and whether it was right:
+
+*Agent's claim:* All seven target values reproduce exactly, but only when the between-subjects factor is coded as travel direction (east/west) rather than orientation (toward/away), and only with Type III SS. Coded as the paper describes it, outcomes 1 and 3 do not reproduce: the orientation main effect is large and the interaction is null. The agent concluded that the paper mislabels the analysis it ran, and that the substantive conclusion is unchanged.
+
+*Was it right?*
+
+Yes I belive the agent was correct. Looing at the paper, I can see that the what the authors descibe they did versus what they calcuate did not match, and the agent was able to figure this out on its own which was very well done.
+
+## Time
+
+- Your time: it took me about 1 hour and 30 minutes to do this.
+- Agent wall-clock time (hours): ≈ 0.1 (Sun Nov 22, 13:52–13:58 PST)
+- Stopped at the 4-hour cap? No. What remained: No; nothing remained.
+
+## Assessment
+
+\[Optional for Part A\]
+
+## AI documentation
+
+- Agent and interface: Claude in the claude.ai desktop app, in an agentic session (cloud Linux workspace with shell, R 4.x and file tools)
+- Model and version, if the tool reports it: Claude Opus 5.5 (`claude-opus-5-5`)
+- Context you gave it: The full PS3 assignment text (pasted as the first message, with links to `ps3_reproducibility.qmd` and `ps3_check_template.qmd`), then "do this paper ps3/Group A/Choice 2". The agent cloned the public course repo itself and worked from the Choice 2 folder (PDF, data, `reproducibilityReport.Rmd`).
+- Number of times you intervened, and the most important intervention: 1. I stopped a Quarto install and told the agent which article to do. There was no help with the analysis.
+- Transcript: [`transcripts/`](../transcripts/) \

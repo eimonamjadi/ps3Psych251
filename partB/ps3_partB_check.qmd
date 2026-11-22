@@ -1,0 +1,332 @@
+---
+title: "Reproducibility check: Patil & Duncan (2018), Experiment 1"
+author: "Eimon Amjadi"
+date: today
+format:
+  html:
+    toc: true
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## Article
+
+- Citation and DOI: Patil, A., & Duncan, K. (2018). Lingering cognitive states shape fundamental mnemonic abilities. *Psychological Science, 29*(1), 45–55. https://doi.org/10.1177/0956797617728592
+- Data/materials repository URL: https://osf.io/d7w8a/ (OSF registration, frozen 2017-10-18; linked from the paper's Open Practices statement)
+- Part A (known case) or Part B (a classmate's project paper): **Part B**
+- Part B only: the classmate's project repo, and which target outcome is its key effect: [`psych251/patil2018`](https://github.com/psych251/patil2018). Key effect = **target outcome 1** (Experiment 1: associative-memory accuracy after an "old" vs. "new" judgment on the preceding trial).
+
+## Target outcomes
+
+Written **before** opening the data: drafted by the agent from the paper alone, then checked against the PDF and approved by me at 14:44 on Nov 22.
+
+| \# | Target outcome (Experiment 1) | Paper value(s) |
+|------------------------|------------------------|------------------------|
+| 1 | **Key effect.** Associative-memory accuracy is higher after an "old" judgment on the preceding trial than after a "new" judgment | +8.23 points, 95% CI \[4.10, 12.36\]; F(1, 31) = 13.88, p = .001, ηp² = .31 |
+| 2 | Main effect of stimulus category on associative accuracy (objects \> scenes) | F(1, 31) = 18.16, p \< .001, ηp² = .37 |
+| 3 | Preceding judgment × stimulus category interaction on associative accuracy (not significant) | F(1, 31) = 1.98, p = .169, ηp² = .06 |
+| 4 | No effect of preceding judgment on item memory (d′) | F(1, 31) = 0.02, p \> .250, ηp² \< .01 |
+| 5 | Normalized difference scores: the benefit is larger for associative than for item memory (N = 31) | t(30) = 2.49, p = .018, 95% CI \[0.04, 0.41\], d = 0.45 |
+
+## Materials inventory
+
+Checked on the OSF registration on Nov 22, 2026. The registration's files are dated Nov 28, 2016.
+
+| Item | Available? | Notes |
+|------------------------|------------------------|------------------------|
+| Raw data | No | The raw PsychoPy output files are not posted |
+| Processed data | Yes | `analysis/Exp1.csv` (1.66 MB; 16,940 trial rows × 27 columns). Trial-level data with derived columns already computed: previous-trial judgment (`preJudgment`, `preResp`), associative-accuracy coding (`source_acc`, `source_accNoNA`, `source_FA`), centred previous RT, response bias, and several `exclude*` flags. `Exp2.csv` is also posted. |
+| Codebook / variable descriptions | No | No README or codebook. Variable meanings have to be inferred from column names, the paper, and the analysis script. |
+| Analysis code | Yes | `analysis/Exp1.R` (43 KB) and `helper_functions_SE.R` (6 KB), in R. `Exp2.R` is also posted. |
+| Preregistration | No | The OSF entry is an "Open-Ended Registration" created Oct 18, 2017. That is after the data were collected (files dated Nov 2016), so it's an archive snapshot, not a preregistration. The paper says sample size came from a power analysis on pilot data. |
+| Task materials | Yes | `testing_materials/Exp1/`: PsychoPy study and test scripts, instructions PDF, `inputFiles.zip`, `stim.zip` (56 MB), and the post-test questionnaire |
+
+## Reproduction
+
+The agent did this work under my direction. No code from the classmate's project was used. The agent worked in two passes:
+
+- **Pass 1, from the paper only** (14:50–14:52). The analysis follows the paper's Method and Results text.
+- **Pass 2, authors' script consulted** (14:52–14:54). Pass 1 did not exactly match outcomes 4 and 5, so the agent read the authors' `Exp1.R` on OSF to find the undocumented choices. It reimplemented those choices in its own code below; nothing was copied from the script. Every point where Pass 2 departs from the paper's text is labelled.
+
+`data/Exp1.csv` is the OSF file unchanged. Its SHA-256 (`8791fdcb…8d6910`) matches the hash OSF reports.
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(afex)      # repeated-measures ANOVA (aov_ez)
+library(knitr)
+afex_options(type = 3, es_aov = "pes")
+# For a fully within-subject design with one value per cell, Type II and Type III
+# SS are identical. The authors used ez::ezANOVA(type = 2); this uses afex.
+
+rm_anova <- function(df, dv) {
+  aov_ez(id = "sub_num", dv = dv, data = df, within = c("prej", "stim"))$anova_table |>
+    as_tibble(rownames = "effect") |>
+    transmute(effect, df1 = `num Df`, df2 = `den Df`, F = F, p = `Pr(>F)`, pes = pes)
+}
+```
+
+```{r}
+#| label: load
+raw <- read_csv("data/Exp1.csv", show_col_types = FALSE)
+dim(raw)
+n_distinct(raw$sub_num)   # 35 recruited
+```
+
+```{r}
+#| label: preprocess
+# There is no codebook. These checks confirm what the derived columns mean before they are used.
+chk <- raw |>
+  arrange(sub_num, block_num, trial_num) |>
+  group_by(sub_num, block_num) |>
+  mutate(lag_judgment = lag(judgment), lag_resp = lag(recog_resp_bin)) |>
+  ungroup()
+c(preJudgment_is_previous_trials_judgment = isTRUE(all.equal(chk$lag_judgment, chk$preJudgment)),
+  preResp_is_previous_trials_key          = isTRUE(all.equal(chk$lag_resp, chk$preResp)))
+
+# RespBias = 1 when the correct word equals the word given on the previous trial
+# (the "response priming" trials the paper says were removed)
+with(raw, table(RespBias, correct_word_eq_prev_resp = word_num == preResp - 2, useNA = "ifany"))
+
+# source_FA = an old item recognized with the wrong word; source_acc = correct word
+with(filter(raw, old_num == 1), table(recog_resp, source_FA, useNA = "ifany"))
+
+# Participant exclusions: `exclude` flags 3 people (paper: 2 prior participation + 1 drowsy).
+# `exclude_item_source` flags one more person, used only for outcome 5.
+raw |> filter(exclude == 1) |> distinct(sub_num)
+raw |> filter(exclude_item_source == 1, exclude == 0) |> distinct(sub_num)
+
+d <- raw |>
+  filter(exclude == 0) |>
+  mutate(stim = factor(stim_num, levels = c(0, 1), labels = c("object", "scene")),  # O* vs SI*/SO* images
+         prej = factor(preJudgment, levels = c(1, 0), labels = c("old", "new")))
+n_distinct(d$sub_num)     # paper: 32
+
+# Trials entering the associative-memory analysis (paper: old items recognized as old,
+# minus response-priming trials; the first trial of each block has no preceding judgment)
+assoc_trials <- d |> filter(!is.na(preJudgment), RespBias == 0, old_num == 1, judgment == 1)
+nrow(assoc_trials)
+```
+
+### Outcomes 1–3: associative-memory ANOVA
+
+Corrected associative accuracy = P(correct word) − P(wrong word)/2. It is computed for each participant × preceding judgment × stimulus cell on the trials defined above (skip responses stay in the denominator) and expressed in percentage points.
+
+```{r}
+#| label: outcomes-1-3
+assoc_cells <- assoc_trials |>
+  group_by(sub_num, prej, stim) |>
+  summarise(n = n(), acc = 100 * (mean(source_acc == 1) - mean(source_FA == 1) / 2), .groups = "drop")
+
+assoc_anova <- rm_anova(assoc_cells, "acc")
+kable(assoc_anova, digits = 4, caption = "2 (preceding judgment) × 2 (stimulus) RM ANOVA on corrected associative accuracy")
+
+# Outcome 1, size of the effect. Two ways to compute the old - new difference:
+diff_ci <- function(x) { tt <- t.test(x); c(diff = mean(x), lo = tt$conf.int[1], hi = tt$conf.int[2], t = unname(tt$statistic)) }
+
+# (a) averaging the four ANOVA cells (this is the contrast the F tests: t^2 = F)
+cellavg <- assoc_cells |> group_by(sub_num, prej) |> summarise(acc = mean(acc), .groups = "drop") |>
+  pivot_wider(names_from = prej, values_from = acc)
+# (b) scoring each participant once per preceding judgment, pooled over objects and scenes
+pooled <- assoc_trials |> group_by(sub_num, prej) |>
+  summarise(acc = 100 * (mean(source_acc == 1) - mean(source_FA == 1) / 2), .groups = "drop") |>
+  pivot_wider(names_from = prej, values_from = acc)
+
+kable(rbind(`(a) mean of ANOVA cells` = diff_ci(cellavg$old - cellavg$new),
+            `(b) pooled over stimulus` = diff_ci(pooled$old - pooled$new)), digits = 3,
+      caption = "Old − new difference in corrected associative accuracy (points), 95% CI")
+```
+
+The ANOVA reproduces the reported F values exactly. The reported **8.23 \[4.10, 12.36\]** corresponds to version (b): one score per participant per preceding judgment, pooled over stimulus category. The authors' script does the same (Exp1.R, lines 110–117). Version (b)'s t (4.06, so t² = 16.5) is not the ANOVA's F of 13.88. So the paper's effect size and its F come from two different computations, and the text doesn't say this. Version (b) gives CI bounds of 4.09 and 12.37, while the paper prints 4.10 and 12.36.
+
+### Outcome 4: item memory (d′)
+
+As the paper describes it: d′ = z(hit rate) − z(false-alarm rate), "calculated only for trials on which participants failed to retrieve the correct association". So hits come from old trials without a correct association, false alarms from new trials, and response-priming trials and no-response trials are removed.
+
+```{r}
+#| label: outcome-4
+item_trials <- d |> filter(!is.na(preJudgment), RespBias == 0, source_accNoNA != 1, !is.na(judgment))
+
+item_counts <- item_trials |>
+  group_by(sub_num, prej, stim) |>
+  summarise(nH = sum(old_num == 1), H = sum(judgment[old_num == 1]),
+            nF = sum(old_num == 0), Fa = sum(judgment[old_num == 0]), .groups = "drop") |>
+  mutate(hr = H / nH, far = Fa / nF)
+
+# The paper mentions no correction, but many cells have a rate of exactly 0 or 1 (=> infinite d'):
+c(cells = nrow(item_counts), hit_rate_1 = sum(item_counts$hr == 1), fa_rate_0 = sum(item_counts$far == 0),
+  hit_rate_0 = sum(item_counts$hr == 0), fa_rate_1 = sum(item_counts$far == 1))
+# No cell has a hit rate of 0 or a false-alarm rate of 1, so applying each correction to both
+# rates is equivalent to the authors' one-sided rule (fix hits of 1 and false alarms of 0 only).
+
+# (a) standard corrections an analyst following the paper might pick
+corr <- list(
+  `log-linear (k+.5)/(n+1)` = function(k, n) (k + .5) / (n + 1),
+  `1/(2n) for 0 and 1`      = function(k, n) pmin(pmax(k / n, .5 / n), 1 - .5 / n),
+  # (b) the authors' rule (Exp1.R lines 230-248; not in the paper):
+  #     hit rate 1 -> 121/122 and false-alarm rate 0 -> 1/122, whatever the cell's trial count
+  `authors: 121/122 and 1/122` = function(k, n) { r <- k / n; r[r == 1 & k == n] <- 121/122; r[r == 0] <- 1/122; r })
+
+dprime_results <- imap_dfr(corr, function(f, nm) {
+  cells <- item_counts |> mutate(dp = qnorm(f(H, nH)) - qnorm(f(Fa, nF)))
+  rm_anova(cells, "dp") |> mutate(correction = nm, .before = 1)
+})
+kable(dprime_results, digits = 4, caption = "2 × 2 RM ANOVA on d′ under three corrections for rates of 0 or 1")
+```
+
+Under every correction there is no effect of preceding judgment on d′, which matches the paper's conclusion. Only the authors' undocumented fixed-constant rule gives the printed **F = 0.02** (along with stimulus F = 52.70 and the interaction F = 6.38).
+
+### Outcome 5: normalized difference scores
+
+The paper: "(“old” judgment on preceding trial – “new” judgment on preceding trial)/average memory", computed for associative accuracy and for d′ and compared with a paired t test. It says participants with non-positive scores were excluded (N = 31).
+
+```{r}
+#| label: outcome-5
+fix_rate <- function(k, n, K) { r <- k / n; r[r == 1] <- (K - 1) / K; r[r == 0] <- 1 / K; r }
+dz <- function(x) mean(x) / sd(x)
+
+normalized_t <- function(data, item_fix, denom = c("mean_of_conditions", "authors_overall")) {
+  denom <- match.arg(denom)
+  a <- data |> filter(!is.na(preJudgment), RespBias == 0, old_num == 1, judgment == 1) |>
+    group_by(sub_num, preJudgment) |>
+    summarise(v = mean(source_acc) - mean(source_FA) / 2, .groups = "drop") |>
+    pivot_wider(names_from = preJudgment, values_from = v, names_prefix = "a")
+  i <- data |> filter(!is.na(preJudgment), RespBias == 0, source_accNoNA != 1, !is.na(judgment)) |>
+    group_by(sub_num, preJudgment) |>
+    summarise(dp = qnorm(item_fix(sum(judgment[old_num == 1]), sum(old_num == 1))) -
+                   qnorm(item_fix(sum(judgment[old_num == 0]), sum(old_num == 0))), .groups = "drop") |>
+    pivot_wider(names_from = preJudgment, values_from = dp, names_prefix = "i")
+  m <- inner_join(a, i, by = "sub_num")
+  if (denom == "mean_of_conditions") {
+    m <- m |> mutate(den_a = (a1 + a0) / 2, den_i = (i1 + i0) / 2)
+  } else {
+    # authors (Exp1.R lines 331-349): overall scores over ALL trials (including those with no
+    # preceding judgment); overall associative FA rate has new-judged-old trials in its denominator
+    ov <- data |> group_by(sub_num) |>
+      summarise(den_a = mean(source_acc[RespBias == 0 & old_num == 1 & judgment %in% 1]) -
+                        mean(source_FA[RespBias == 0 & judgment %in% 1]) / 2,
+                den_i = { t <- RespBias == 0 & source_accNoNA != 1 & !is.na(judgment)
+                          qnorm(fix_rate(sum(judgment[t & old_num == 1]), sum(t & old_num == 1), 243)) -
+                          qnorm(fix_rate(sum(judgment[t & old_num == 0]), sum(t & old_num == 0), 243)) })
+    m <- left_join(m, ov, by = "sub_num")
+  }
+  m <- m |> mutate(nd_assoc = (a1 - a0) / den_a, nd_item = (i1 - i0) / den_i)
+  tt <- t.test(m$nd_assoc, m$nd_item, paired = TRUE)
+  tibble(N = nrow(m), df = unname(tt$parameter), t = unname(tt$statistic), p = tt$p.value,
+         lo = tt$conf.int[1], hi = tt$conf.int[2], d = dz(m$nd_assoc - m$nd_item),
+         min_denominator = min(c(m$den_a, m$den_i)))
+}
+
+loglin <- function(k, n) (k + .5) / (n + 1)
+d31 <- raw |> filter(exclude_item_source == 0)   # the authors' N = 31 (drops subject 227 as well)
+
+outcome5 <- bind_rows(
+  `(a) paper text: denominator = mean of conditions, log-linear d', positive-score rule (N = 32)` =
+    normalized_t(d, loglin, "mean_of_conditions"),
+  `(a') same, N = 31 (authors' flag)` = normalized_t(d31, loglin, "mean_of_conditions"),
+  `(b) authors' choices: overall-score denominator, 242/243 & 1/243 rule (N = 31)` =
+    normalized_t(d31, function(k, n) fix_rate(k, n, 243), "authors_overall"),
+  `(b') authors' choices, keeping subject 227 (N = 32)` =
+    normalized_t(d, function(k, n) fix_rate(k, n, 243), "authors_overall"),
+  .id = "specification")
+kable(outcome5, digits = 4, caption = "Associative vs. item normalized difference scores (paired t test)")
+```
+
+Under the paper's description, no participant has a non-positive denominator, so the stated exclusion rule removes nobody and N stays at 32. The authors' script drops subject 227 and says (in a code comment) the reason is a "negative overall corrected source accuracy". In the posted data, that score is **positive** for 227 under every computation (0.12 by the authors' own formula), so the exclusion can't be explained from the data. It hardly matters, though: keeping 227 gives t(31) = 2.48, p = .019.
+
+### Agent's summary of reproduced values
+
+```{r}
+#| label: summary
+a1 <- filter(assoc_anova, effect == "prej"); a2 <- filter(assoc_anova, effect == "stim"); a3 <- filter(assoc_anova, effect == "prej:stim")
+pb <- diff_ci(pooled$old - pooled$new)
+r4 <- dprime_results |> filter(effect == "prej")
+r5 <- outcome5
+fmtF <- function(r) sprintf("F(%d, %d) = %.2f, p = %.4f, ηp² = %.3f", r$df1, r$df2, r$F, r$p, r$pes)
+fmtT <- function(r) sprintf("t(%d) = %.2f, p = %.4f, 95%% CI [%.2f, %.2f], d = %.2f", r$df, r$t, r$p, r$lo, r$hi, r$d)
+tibble(
+  `#` = 1:5,
+  `Paper value` = c("+8.23 [4.10, 12.36]; F(1, 31) = 13.88, p = .001, ηp² = .31",
+                    "F(1, 31) = 18.16, p < .001, ηp² = .37",
+                    "F(1, 31) = 1.98, p = .169, ηp² = .06",
+                    "F(1, 31) = 0.02, p > .250, ηp² < .01",
+                    "t(30) = 2.49, p = .018, CI [0.04, 0.41], d = 0.45"),
+  `Reproduced: paper's description` = c(
+    sprintf("+%.2f [%.2f, %.2f] (pooled); %s", pb["diff"], pb["lo"], pb["hi"], fmtF(a1)),
+    fmtF(a2), fmtF(a3),
+    paste(sprintf("%s: F = %.3f, p = %.3f, ηp² = %.4f", r4$correction[1:2], r4$F[1:2], r4$p[1:2], r4$pes[1:2]), collapse = "; "),
+    fmtT(r5[1, ])),
+  `Reproduced: with authors' undocumented choices` = c("(same)", "(same)", "(same)",
+    sprintf("F(1, 31) = %.3f, p = %.3f, ηp² = %.4f", r4$F[3], r4$p[3], r4$pes[3]),
+    fmtT(r5[3, ]))
+) |> kable(caption = "Reproduced values beside the paper's (agent's summary; the verdicts below are the checker's)")
+```
+
+## Checker's verdict
+
+Filled in by you, not the agent.
+
+| \# | Paper value | Reproduced value | Verdict (exact / minor / major / not reproducible) | Reason for discrepancy |
+|---------------|---------------|---------------|---------------|---------------|
+| 1 (key effect) | +8.23 \[4.10, 12.36\]; F(1, 31) = 13.88, p = .001, ηp² = .31 | +8.23 \[4.09, 12.37\]; F(1, 31) = 13.88, p = .0008, ηp² = .31 | minor | The F is computed from the four cell means, but the 8.23 and its CI only come out if each person's score is pooled over objects and scenes. The paper doesn't say this (the authors' script, lines 110–117, does it). Averaging the cells instead gives 7.80 \[3.53, 12.07\]. The CI bounds differ from the paper's by 0.01. |
+| 2 | F(1, 31) = 18.16, p \< .001, ηp² = .37 | F(1, 31) = 18.16, p = .0002, ηp² = .37 | \- | None |
+| 3 | F(1, 31) = 1.98, p = .169, ηp² = .06 | F(1, 31) = 1.98, p = .169, ηp² = .06 | \- | None |
+| 4 | F(1, 31) = 0.02, p \> .250, ηp² \< .01 | From the paper's description, with a standard correction: F = 0.05–0.16, p = .69–.83, ηp² ≤ .005. With the authors' correction: F(1, 31) = 0.02, p = .88, ηp² = .0007 | minor | 23 of 128 hit or false-alarm rates are exactly 0 or 1, so d′ is infinite without a correction. The paper names none. The authors' script (lines 230–248) sets them to 121/122 and 1/122. Every correction leads to the same conclusion: no effect. |
+| 5 | t(30) = 2.49, p = .018, 95% CI \[0.04, 0.41\], d = 0.45 | From the paper's description: t(31) = 2.67, p = .012, CI \[0.07, 0.50\], d = 0.47. With the authors' choices: t(30) = 2.49, p = .018, CI \[0.04, 0.41\], d = 0.45 | minor | Three choices appear only in the script (lines 324–389): what "average memory" means (an overall score over all trials), a 242/243 and 1/243 correction, and dropping subject 227. The stated reason for dropping 227 (a non-positive score) isn't true in the posted data. Keeping 227 gives t(31) = 2.48, p = .019. |
+
+Agent's own claim about success, and whether it was right:
+
+*Agent's claim:* Following only the paper's text, outcomes 2 and 3 reproduce exactly. Outcome 1's F test reproduces exactly, and its 8.23-point difference reproduces once the scores are pooled over stimulus category, which the paper doesn't mention; the CI bounds then differ from the paper's by 0.01 each. Outcomes 4 and 5 reach the same conclusions (no d′ effect, F ≤ 0.16; associative \> item, t between about 2.4 and 3.0, all p \< .03) but don't match the printed numbers exactly. That's because the paper leaves out three choices: the correction for hit and false-alarm rates of 0 or 1 (23 of 128 participant × condition cells, from 15 participants), what "average memory" means, and the exclusion that brings N to 31. Using the authors' posted `Exp1.R` to fill in those choices, all five outcomes reproduce exactly. One thing remains unexplained: the stated reason for excluding subject 227 isn't true of the posted data. That exclusion doesn't change the result.
+
+*Was it right?*
+
+I would say the agent is right but the issues that it found are minor small changes and the agent finds what the paper didn't say that was calculated but what it found is very minor. The values in its claim match the rendered output, and none of the discrepancies changes whether an effect is significant or which direction it goes. The one part I would qualify is "all five outcomes reproduce exactly," because that is only true after reading the authors' script; from the paper alone, outcomes 4 and 5 match in their conclusions but not in their exact values. Its finding about subject 227 is worth reporting, but keeping that participant gives almost the same result (t(31) = 2.48 vs. t(30) = 2.49), so it doesn't affect the paper's conclusions.
+
+## Time
+
+- Your time (hours): 1
+- Agent wall-clock time (hours): ≈ 0.3 (14:40–14:57 PST on Sun Nov 22, including about 2 minutes waiting for the data upload):
+  - 14:40–14:44: target outcomes drafted from the paper, then stopped for approval
+  - 14:44–14:48: OSF inventory through the browser
+  - 14:48–14:50: waiting for the data upload
+  - 14:50–14:52: pass 1, from the paper only
+  - 14:52–14:54: pass 2, with the authors' script
+  - 14:54–14:57: report written and test-rendered
+- Stopped at the 4-hour cap? What remained: No. Every target outcome was attempted.
+
+## Assessment
+
+\[Your assessment: is the primary result analytically reproducible? What would have made this take 30 minutes?\]
+
+Yes, with one qualification. The paper's primary result is that recent familiarity improves associative memory (F(1, 31) = 13.88, the classmate's key effect). It reproduces exactly from the posted data when I follow the paper's description of the analysis, and so do the stimulus main effect and the interaction. The abstract's claim that the benefit is *selective* also holds using the paper's description alone: item memory shows no effect of the preceding judgment, and the normalized benefit is larger for associative than for item memory.
+
+With an agent and the authors' posted script, the check took some time. I also needed to interveen to get the agent the correct data and make sure it was able to go to the correct OSF link. Without the script, the exact values for outcomes 4 and 5 couldn't have been reached. For a human working from the paper to finish in 30 minutes, the authors would have needed to provide the codebook and an analysis scripts that runs without any editing needed, (not hard coding there downloads path).
+
+*Facts the agent found that bear on this (for you to weigh):*
+
+- The data and the authors' analysis script are both posted, and the script runs on the posted data. Every number traced back to a specific block of code.
+- Not in the paper:
+  - the 0/1 rate correction (121/122 and 1/122, or 242/243 and 1/243)
+  - that the key effect's 8.23 is pooled over stimulus while the F comes from cell means
+  - that "average memory" means an overall score over all trials, whose false-alarm denominator includes new items
+  - the subject 227 exclusion, whose stated reason doesn't hold in the data
+- There is no codebook. The derived columns (`RespBias`, `source_accNoNA`, `exclude_item_source`) had to be decoded by checking them against the raw responses.
+- The script has a hard-coded path (`~/Downloads/analysis/Exp1.csv`) and isn't organized by target outcome.
+
+## AI documentation
+
+- Agent and interface: Claude in the claude.ai desktop app, in an agentic session: a cloud Linux workspace with R 4.x and a shell, plus the desktop app's built-in browser on my laptop, which it used to reach OSF because the workspace couldn't.
+- Model and version, if the tool reports it: Claude Opus 5.5 (`claude-opus-5-5`)
+- Context you gave it:
+  - Earlier in the same conversation (from Part A): the full PS3 assignment text.
+  - A Part B instruction message: the DOI, the classmate's repo name, the key effect, and four steps. Those steps were: draft targets from the paper only and stop for approval; inventory the authors' materials; reproduce in R in this template without the classmate's code, leaving the verdicts blank, timing the work, and stopping at 4 h; draft this documentation.
+  - The classmate's repo (`psych251/patil2018`) was attached to the session automatically. The agent listed the names of its files and folders (looking for a copy of the paper) and opened none of its files.
+  - The paper text came from the authors' PDF on their lab site. The data came from the OSF file I uploaded.
+  - The agent read the authors' `Exp1.R` (OSF) only after its first pass, and logged this.
+- Number of times you intervened, and the most important intervention: 2.
+  1.  Approved the drafted target outcomes after checking them against the PDF. This was a planned checkpoint.
+  2.  Uploaded `Exp1.csv` after the agent's request for access to my Downloads folder was blocked.
+- Transcript: [`transcripts/`](../transcripts/) \[add link after exporting; Parts A and B are in the same conversation\]
